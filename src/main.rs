@@ -42,13 +42,16 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    if cli.verbose {
-        let filter = EnvFilter::from_default_env().add_directive("depstalk=debug".parse()?);
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .with_span_events(FmtSpan::CLOSE)
-            .init();
-    }
+    let filter = EnvFilter::from_default_env();
+    let filter = if cli.verbose {
+        filter.add_directive("depstalk=debug".parse()?)
+    } else {
+        filter.add_directive("depstalk=warn".parse()?)
+    };
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_span_events(FmtSpan::CLOSE)
+        .init();
 
     let cwd = std::env::current_dir()?;
     let mut loader = if cli.fresh {

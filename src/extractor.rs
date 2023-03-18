@@ -1,4 +1,4 @@
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,7 +34,10 @@ impl Extractor {
     pub fn new() -> Self {
         let next_page = Selector::parse(".paginate-container a:last-child").unwrap();
         let rows = Selector::parse(r#"[data-test-id="dg-repo-pkg-dependent"]"#).unwrap();
-        let user = Selector::parse(r#"[data-hovercard-type="user"]"#).unwrap();
+        let user = Selector::parse(
+            r#"[data-hovercard-type="user"], [data-hovercard-type="organization"]"#,
+        )
+        .unwrap();
         let repo = Selector::parse(r#"[data-hovercard-type="repository"]"#).unwrap();
         let star = Selector::parse(".octicon-star").unwrap();
         let fork = Selector::parse(".octicon-repo-forked").unwrap();
@@ -51,54 +54,20 @@ impl Extractor {
 
     pub fn extract_from_html(&self, html: &str) -> ExtractResult {
         let html = Html::parse_document(html);
-        let selectors = Extractor::new();
 
         let dependents = html
-            .select(&selectors.rows)
+            .select(&self.rows)
             .flat_map(|row| {
-                let owner = row
-                    .select(&selectors.user)
-                    .next()?
-                    .text()
-                    .collect::<String>();
-
-                let repo = row
-                    .select(&selectors.repo)
-                    .next()?
-                    .text()
-                    .collect::<String>();
-
-                let stars = row
-                    .select(&selectors.star)
-                    .next()?
-                    .next_sibling()?
-                    .value()
-                    .as_text()?
-                    .trim()
-                    .parse()
-                    .ok()?;
-
-                let forks = row
-                    .select(&selectors.fork)
-                    .next()?
-                    .next_sibling()?
-                    .value()
-                    .as_text()?
-                    .trim()
-                    .parse()
-                    .ok()?;
-
-                Some(Dependent {
-                    owner,
-                    repo,
-                    stars,
-                    forks,
-                })
+                let dependent = self.extract_from_row(row);
+                if dependent.is_none() {
+                    tracing::warn!(html = row.html(), "unable to extract dependent from row");
+                }
+                dependent
             })
             .collect();
 
         let next_page = html
-            .select(&selectors.next_page)
+            .select(&self.next_page)
             .next()
             .and_then(|el| el.value().attr("href"))
             .map(ToOwned::to_owned);
@@ -107,5 +76,38 @@ impl Extractor {
             dependents,
             next_page,
         }
+    }
+
+    fn extract_from_row(&self, row: ElementRef) -> Option<Dependent> {
+        let owner = row
+            .select(&self.user)
+            .next()
+            .map(|el| el.text().collect::<String>());
+
+        let repo = row
+            .select(&self.repo)
+            .next()
+            .map(|el| el.text().collect::<String>());
+
+        let stars = row
+            .select(&self.star)
+            .next()
+            .and_then(|el| el.next_sibling())
+            .and_then(|el| el.value().as_text())
+            .and_then(|s| s.trim().replace(',', "").parse().ok());
+
+        let forks = row
+            .select(&self.fork)
+            .next()
+            .and_then(|el| el.next_sibling())
+            .and_then(|el| el.value().as_text())
+            .and_then(|s| s.trim().replace(',', "").parse().ok());
+
+        Some(Dependent {
+            owner: owner?,
+            repo: repo?,
+            stars: stars?,
+            forks: forks?,
+        })
     }
 }
